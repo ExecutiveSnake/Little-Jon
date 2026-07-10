@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to session-key-policy.json and fill in your real router/vault addresses. This must match whatever is registered with the smart account's on-chain session-key validator module.",
+  "allowedTargets": [
+    {
+      "_comment": "Example DEX router - only swap-family selectors, capped native value per call.",
+      "address": "0x0000000000000000000000000000000000dEAD",
+      "selectors": ["0x38ed1739", "0x8803dbee"],
+      "maxValueWei": "0"
+    }
+  ],
+  "validAfter": 0,
+  "validUntil": 4102444800
+}

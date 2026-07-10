@@ -1,0 +1,6 @@
+node_modules/
+dist/
+config/session-key-policy.json
+config/KILL_SWITCH
+config/daily-loss-state.json
+.env
