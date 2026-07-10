@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy to chainlink-feeds.json. Maps stock-token address -> Chainlink feed proxy address on Robinhood Chain. Canonical feed list: https://docs.chain.link/data-feeds/price-feeds/addresses?network=robinhood — always copy from there, never guess.",
+  "0x0000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000"
+}

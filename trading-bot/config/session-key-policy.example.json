@@ -1,10 +1,16 @@
 {
-  "_comment": "Copy to session-key-policy.json and fill in your real router/vault addresses. This must match whatever is registered with the smart account's on-chain session-key validator module.",
+  "_comment": "Copy to session-key-policy.json. Off-chain allowlist for every call the bot may sign — target contract + 4-byte selectors + max native value. Must mirror the on-chain session-key permissions registered on the Kernel account. Selectors: 0x095ea7b3 = ERC20.approve, 0x38ed1739 = UniswapV2 swapExactTokensForTokens.",
   "allowedTargets": [
     {
-      "_comment": "Example DEX router - only swap-family selectors, capped native value per call.",
-      "address": "0x0000000000000000000000000000000000dEAD",
-      "selectors": ["0x38ed1739", "0x8803dbee"],
+      "_comment": "Uniswap V2 router (set the real address once published)",
+      "address": "0x0000000000000000000000000000000000000000",
+      "selectors": ["0x38ed1739"],
+      "maxValueWei": "0"
+    },
+    {
+      "_comment": "Each token the bot may approve for trading (router / RFQ allowanceTarget). Add one entry per token address with the approve selector.",
+      "address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "selectors": ["0x095ea7b3"],
       "maxValueWei": "0"
     }
   ],

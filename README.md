@@ -1,273 +1,175 @@
-# Analysis Credits — Prepaid AI Trading-Analysis Credits on Robinhood Chain
+# Little Jon — AI Trading-Analysis Bot on Robinhood Chain
 
-An illiquid, non-transferable prepaid credit system for an AI trading-analysis
-service, plus scaffolding for a guardrailed trading bot that consumes it.
+Little Jon is a user-in-the-loop trading system for Robinhood Chain: users prepay
+for AI analysis with an illiquid, non-transferable credit, ask the bot to find a
+trade setup on any tradable token, manually confirm (with their own position size)
+any proposal that clears a confidence bar, and let a persistent watcher execute
+entries, stop-losses, and take-profits on-chain through a scoped smart account.
 
 ```
-contracts/          Foundry project: AnalysisCredits.sol + tests + deploy script
-metering-service/    Node/TypeScript: listens for Deposit events, serves analysis
-                     requests, debits credits idempotently
-trading-bot/         Node/TypeScript scaffold: ERC-4337 session-key account,
-                     Chainlink price reads, metering-gated trades, risk guardrails
+contracts/          Foundry project: AnalysisCredits.sol (prepaid credits) + tests
+metering-service/    Node/TS: Deposit-event indexer + credit-gated Claude analysis API
+trading-bot/         Node/TS "Little Jon": token resolution, candle history, proposal
+                     flow, SL/TP watcher, ZeroDev smart-account execution, CLI
 ```
 
-## How it fits together
+## The flow
 
-1. A user calls `AnalysisCredits.deposit(amount)` with USDe (or whatever
-   `settlementToken` the contract is deployed with). They receive an internal,
-   non-transferable `credits` balance — there is no `transfer`/`approve`, so credits
-   can never move between accounts or trade on a secondary market.
-2. `metering-service` watches for `Deposit` events (via an Alchemy WebSocket endpoint)
-   and exposes an internal `POST /v1/analyze` API. On a request, it checks the user's
-   on-chain credit balance, calls the Claude API for the actual analysis, and — only
-   once analysis has actually been delivered — calls
-   `AnalysisCredits.debitCredit(user, calls)` from a relayer key holding
-   `RELAYER_ROLE`.
-3. `trading-bot` is a scaffold for a strategy that, before every trade: checks a
-   manual kill switch and daily loss circuit breaker, enforces a max position size,
-   reads a Chainlink Stock Token price feed and enforces a max slippage band, calls
-   the metering service for analysis (a trade never executes without it), and then
-   builds/signs an ERC-4337 UserOperation with a session key that is scoped to a
-   specific allowlist of target contracts and function selectors — never full account
-   custody.
+1. **Prepay.** A user deposits USDe (or the configured settlement token) into
+   `AnalysisCredits.deposit()` and receives internal, non-transferable credits —
+   no `transfer`/`approve` exists, so credits can never trade on a secondary market.
+2. **Analyze.** `littlejon analyze <token>` — the token can be an address or a name
+   ("NVDA", "pepe"); names resolve through the local registry + Blockscout search,
+   ranked market-cap first, then volume, then holders. The bot verifies the token is
+   actually tradable (stock token, or LP'd on Uniswap V2 — anything else is refused),
+   seeds price history once (Chainlink round-walk / V2 swap replay), and asks the
+   metering service for a trade plan. The metering service checks the user's on-chain
+   credit balance, has Claude study the 1h/4h/1d charts, and only debits a credit when
+   analysis is actually delivered.
+3. **Gate.** A plan must clear the confidence threshold (user-settable, hard floor
+   65%). Below it, the bot re-analyzes from a fresh angle up to
+   `MAX_ANALYSIS_ATTEMPTS` times — each pass costs a credit — and if nothing
+   qualifies it says so instead of trading a weak setup.
+4. **Confirm.** A qualifying plan is saved as a *proposal*: direction (spot long),
+   market-or-trigger entry, stop-loss, take-profit, confidence, rationale, risks.
+   Nothing executes until the user runs `littlejon confirm <id> --size <USD>`.
+5. **Watch & execute.** The watcher (one shared backend loop for all users'
+   positions) polls trusted prices — cheap on-chain reads, no credit cost — fires
+   trigger entries, stop-losses, and take-profits, executes swaps through the smart
+   account, and confirms every exit by measuring the USDG/rhETH actually received
+   in the wallet before notifying. Realized P&L feeds a daily-loss circuit breaker.
 
-## Prerequisites
+## Token classes & venues
 
-- [Foundry](https://getfoundry.sh) (`forge`, `cast`, `anvil`) for the contracts.
-- Node.js 20+ for the two TypeScript services.
-- An Alchemy account with Robinhood Chain support enabled, for the metering
-  service's WebSocket event listener.
-- An [Anthropic API key](https://console.anthropic.com/) for the metering service's
-  Claude-based analysis agent.
+| Class | Identified by | Price source | Executes via | History backfill |
+| --- | --- | --- | --- | --- |
+| Stock token | ERC-8056 `uiMultiplier()` | Chainlink feed (multiplier included) | 0x RFQ ↔ USDG | Chainlink round-walk |
+| LP'd token | live Uniswap V2 pair vs USDG/rhETH | pair reserves | V2 router swap | Swap-event replay |
+| Anything else | — | — | **refused** | — |
 
-Install Foundry:
+Bonding-curve (RobinFun) tokens that haven't graduated to a Uniswap pool are
+deliberately unsupported. Prices for LP tokens are denominated in their quote asset
+(USDG or rhETH) end-to-end — candles, triggers, SL/TP all share the same units;
+USD conversion (for sizing and P&L) goes through the ETH/USD feed or the
+USDG/rhETH pair.
 
-```bash
-curl -L https://foundry.paradigm.xyz | bash
-foundryup
-```
+Oracle trust rules (per Robinhood Chain docs): staleness check against the feed
+heartbeat, reject non-positive answers, respect the advisory `oraclePaused()` flag
+during corporate actions, and check the L2 sequencer uptime feed (with a
+post-recovery grace period) before trusting any price. When no trusted price is
+available for a token, the watcher does nothing for it that tick — no trigger may
+fire off an untrusted price.
 
-> **Foundry could not be installed in the sandbox this repo was built in**, so
-> `forge build`/`forge test` were never run directly here — two independent things
-> were tried and both were blocked by that environment's outbound network policy:
-> the normal `foundryup` install (blocked at `foundry.paradigm.xyz`), and building
-> `forge`/`cast`/`anvil` from source via `cargo install --git
-> https://github.com/foundry-rs/foundry` (which compiles, but its `svm-rs-builds`
-> build script fetches `https://binaries.soliditylang.org/.../list.json` at build
-> time, which was also blocked). Neither is a Foundry problem — both are specific to
-> that sandbox's network allowlist, and Foundry installs normally in an unrestricted
-> environment.
->
-> Instead, every contract, test, and script in `contracts/` was validated by
-> compiling it with `solc` (0.8.24) directly against the real vendored
-> `forge-std`/`openzeppelin-contracts` sources — all three files compile cleanly with
-> no errors. That confirms syntax/type correctness (imports resolve, function/event
-> signatures match, etc.) but **not** runtime behavior. Run `forge build && forge
-> test -vvv` yourself before trusting the test suite's results — it's what actually
-> exercises event emission, reverts, access control, and the fuzz tests.
+## Safety model
 
-## 1. Contracts (`contracts/`)
+- **Manual confirmation, always.** The bot never opens a position without an
+  explicit `confirm` carrying a user-chosen size.
+- **Guardrails** (all enforced in code, before any transaction):
+  max position size · max slippage/price-impact vs reference · daily realized-loss
+  circuit breaker (one-directional: wins don't re-arm it) · file-based kill switch
+  (`littlejon killswitch on`) that halts everything instantly and works even if
+  RPC/venues are down.
+- **Scoped execution.** Trades go through a ZeroDev Kernel smart account
+  (EntryPoint v0.7 `0x0000000071727De22E5E9d8BAf0edAc6f37da032` on Robinhood
+  Chain). Every call is checked off-chain against a session-key policy
+  (target contract + function selector + value allowlist) before signing; the
+  matching on-chain session-key permissions on the Kernel account are the real
+  enforcement — register them before trading real funds (see
+  `execution/zerodev.ts` for the current key model and the hardening path).
+- **Exit-first bias.** On a reading that satisfies both stop and target, the stop
+  wins. A pending trigger entry whose market has already blown through the stop or
+  target is cancelled, not entered. Failed exits retry every tick and alert loudly;
+  failed entries retry quietly; guardrail-rejected entries cancel.
+- **Dry-run by default.** Without ZeroDev credentials the execution layer validates
+  and logs every call but sends nothing.
 
-Dependencies (`forge-std` v1.9.6, `openzeppelin-contracts` v5.4.0) are vendored as git
-submodules under `contracts/lib/`. If you cloned this repo without `--recurse-submodules`:
+## Getting started
 
-```bash
-git submodule update --init --recursive
-```
+### 0. Prerequisites
 
-### Build & test
+- Node.js 20+; [Foundry](https://getfoundry.sh) for the contracts.
+- An Anthropic API key (metering service) — https://console.anthropic.com
+- An Alchemy app on Robinhood Chain (metering service's WS event listener).
+- A ZeroDev project for chain 4663/46630 (bot execution; optional until go-live).
+
+### 1. Contracts
 
 ```bash
 cd contracts
-forge build
-forge test -vvv
+git submodule update --init --recursive   # forge-std, openzeppelin-contracts
+forge build && forge test -vvv
+cp .env.example .env                      # fill: RPC, PRIVATE_KEY, SETTLEMENT_TOKEN, rates
+forge script script/DeployAnalysisCredits.s.sol:DeployAnalysisCredits \
+  --rpc-url robinhood_testnet --broadcast -vvvv
+cast send <DEPLOYED> "grantRelayer(address)" <RELAYER_ADDR> --rpc-url robinhood_testnet --private-key $PRIVATE_KEY
 ```
 
-The suite in `test/AnalysisCredits.t.sol` covers deposit/credit-minting math (including
-rounding), rate-change time-lock behavior (queued changes only apply to future
-deposits, time-lock enforcement, event emission), `debitCredit` access control and
-insufficient-balance reverts, treasury withdrawal access control, and fuzz tests for
-the conversion-rate math and debit underflow safety.
+Testnet chain ID 46630, RPC `https://rpc.testnet.chain.robinhood.com`, explorer
+`https://explorer.testnet.chain.robinhood.com` (Blockscout verification via
+`--verifier blockscout --verifier-url https://explorer.testnet.chain.robinhood.com/api/`).
+Fund the deployer with testnet ETH first (see Robinhood's chain docs for the
+current faucet). Deploy to mainnet (4663) only after review/audit.
 
-### `AnalysisCredits.sol` summary
-
-- `deposit(uint256 amount)` — pulls `amount` of the settlement token from the caller
-  and mints `credits[msg.sender] += amount / (costPerCall * (1 + marginBps / 10_000))`
-  (floored). Emits `Deposit`.
-- `credits(address)` — public mapping, the only balance surface. No `transfer`,
-  `approve`, or `transferFrom` exist anywhere in the contract.
-- `debitCredit(address user, uint256 calls)` — burns `calls` credits from `user`.
-  Restricted to `RELAYER_ROLE` (OpenZeppelin `AccessControl`). Emits `Debit`.
-- `queueRateUpdate(uint256 newCostPerCall, uint256 newMarginBps)` — owner-only. Queues
-  a new rate that only takes effect after `rateUpdateDelay` seconds, so depositors see
-  pricing changes coming (`RateUpdateQueued` event) before they apply
-  (`RateUpdated` event, once the delay elapses). Deposits already made are priced at
-  the rate in effect at deposit time and are never retroactively repriced.
-  `activatePendingRate()` lets anyone flip a due rate change on-chain explicitly.
-- `withdrawTreasury(address to, uint256 amount)` — owner-only, sweeps accumulated
-  settlement token out of the contract at any time. Does not touch user `credits`
-  balances (those are an internal ledger, not a claim on the contract's token
-  balance).
-- Roles: `Ownable` gates treasury/rate-management/relayer-role management;
-  `AccessControl`'s `RELAYER_ROLE` gates `debitCredit`. See the NatSpec on the
-  constructor for how the two authority tracks relate if you transfer ownership.
-
-### Deploy to Robinhood Chain testnet
-
-1. **Get testnet funds and RPC/explorer details.** Robinhood Chain testnet's RPC
-   endpoint, chain ID, block explorer, and faucet are not yet public as of this
-   writing — check Robinhood's official developer documentation / status page for the
-   current values before deploying, and do not rely on any URL you find elsewhere
-   without verifying it against Robinhood's own docs. Once you have them, fill in
-   `contracts/.env`:
-
-   ```bash
-   cd contracts
-   cp .env.example .env
-   # then edit .env:
-   #   ROBINHOOD_TESTNET_RPC_URL=<official testnet RPC>
-   #   ROBINHOOD_EXPLORER_API_URL=<official testnet explorer API>
-   #   ROBINHOOD_EXPLORER_API_KEY=<explorer API key, if verification is supported>
-   ```
-
-2. **Get a settlement token address.** Either the real testnet USDe deployment (from
-   Ethena's docs, if bridged to Robinhood Chain testnet) or deploy the included
-   `test/mocks/MockUSDe.sol` for a throwaway testnet-only stand-in.
-
-3. **Set deployment parameters** in `contracts/.env` (see `.env.example` for all
-   fields): `PRIVATE_KEY`, `SETTLEMENT_TOKEN`, `COST_PER_CALL`, `MARGIN_BPS`,
-   `RATE_UPDATE_DELAY`, and optionally `ADMIN_ADDRESS`/`RELAYER_ADDRESS`.
-
-4. **Deploy:**
-
-   ```bash
-   source .env
-   forge script script/DeployAnalysisCredits.s.sol:DeployAnalysisCredits \
-     --rpc-url robinhood_testnet \
-     --broadcast \
-     --verify \
-     -vvvv
-   ```
-
-   `--verify` requires `ROBINHOOD_EXPLORER_API_URL`/`ROBINHOOD_EXPLORER_API_KEY` to be
-   set and the explorer to support the standard Etherscan-compatible verification API;
-   drop `--verify` if the testnet explorer doesn't support it yet.
-
-5. **Grant the relayer role** to the metering service's relayer address (skip this if
-   you set `RELAYER_ADDRESS` in `.env` and `ADMIN_ADDRESS` equals the deployer):
-
-   ```bash
-   cast send <ANALYSIS_CREDITS_ADDRESS> "grantRelayer(address)" <RELAYER_ADDRESS> \
-     --rpc-url robinhood_testnet --private-key $PRIVATE_KEY
-   ```
-
-6. Repeat against `robinhood_mainnet` in `foundry.toml` only after the testnet
-   deployment has been reviewed/audited — this contract has not undergone an external
-   audit.
-
-## 2. Metering service (`metering-service/`)
+### 2. Metering service
 
 ```bash
 cd metering-service
-cp .env.example .env   # fill in ALCHEMY_*_URL, ANALYSIS_CREDITS_ADDRESS,
-                        # RELAYER_PRIVATE_KEY, ANTHROPIC_API_KEY
-npm install
-npm test                # vitest — idempotency/retry + analysis-agent unit tests
-npm run dev              # or: npm run build && npm start
+cp .env.example .env   # ALCHEMY_*_URL, ANALYSIS_CREDITS_ADDRESS, RELAYER_PRIVATE_KEY, ANTHROPIC_API_KEY
+npm install && npm test && npm run dev
 ```
 
-- `src/chain/listener.ts` subscribes to `Deposit` on `ANALYSIS_CREDITS_ADDRESS` over
-  the Alchemy WS endpoint, and backfills any events missed while offline using the
-  HTTPS endpoint on startup.
-- `src/api/analysisClient.ts` is the analysis agent: it calls the Claude API
-  (`ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL`, default `claude-sonnet-5`) with
-  `tool_choice` forced to a `submit_analysis` tool, so the response is always a
-  structured `{ direction: "buy"|"sell"|"hold", score, summary, keyRisks }` —
-  never free text that has to be parsed hopefully. It analyzes exactly what it's
-  given (current price + optional recent history from the caller's oracle read, plus
-  optional `newsContext`) and does **not** fetch news/sentiment from any social API
-  itself — `newsContext` is meant to be manually curated (by an operator, or whatever
-  trusted process you run) and passed straight through, precisely so a noisy or
-  rate-limited feed (e.g. Twitter/X's API) can never silently degrade analysis
-  quality. Point `analysisClient.ts` at your own curation pipeline later if you want
-  that automated.
-- `src/api/server.ts` exposes:
-  - `GET /v1/credits/:address` — on-chain credit balance (source of truth; never
-    trust a local cache for this).
-  - `POST /v1/analyze` — `{ idempotencyKey, userAddress, calls, symbol, kind,
-    priceContext: { currentPrice, asOf, recentHistory? }, newsContext? }` → checks
-    balance, calls the Claude API, debits credits on success.
-- `src/api/meteringService.ts` is the idempotency/retry core. Guarantees (see the unit
-  tests in `test/meteringService.test.ts`):
-  - A request is never charged (debited) unless analysis was actually delivered.
-  - Retrying a request that already delivered analysis but failed to debit does
-    **not** call the (potentially costly) Claude API a second time — it goes straight
-    to retrying the debit.
-  - Retrying a request that fully completed (`debited`) replays the cached result
-    instead of re-running anything.
-  - Reusing an idempotency key with different parameters is rejected outright.
-- This API is internal-only — it has no authentication built in and is meant to sit
-  behind a gateway/mTLS/VPC boundary that authenticates the caller (the trading bot,
-  a frontend BFF, etc.).
+`POST /v1/analyze` takes `{ idempotencyKey, userAddress, calls, symbol,
+tokenAddress, kind, currentPrice, asOf, candles: {h1,h4,d1}, attempt?,
+newsContext? }` and returns a validated trade plan. Guarantees (unit-tested):
+never debit without delivered analysis; a delivered-but-undebited request retries
+only the debit (never re-bills the model); completed requests replay from cache;
+plans that are internally inconsistent (stop ≥ entry ≥ target) are rejected before
+they can reach the caller. `newsContext` is operator-curated only — this service
+never fetches news/social data itself, by design.
 
-## 3. Trading bot scaffold (`trading-bot/`)
+### 3. Little Jon
 
 ```bash
 cd trading-bot
 cp .env.example .env
-cp config/session-key-policy.example.json config/session-key-policy.json  # edit targets
-npm install
-npm test                 # vitest — guardrail and session-key-policy unit tests
-npm run dev               # runs the single-cycle scaffold in src/index.ts
+cp config/session-key-policy.example.json config/session-key-policy.json
+cp config/chainlink-feeds.example.json config/chainlink-feeds.json
+npm install && npm test
+
+npm run dev -- analyze NVDA                 # or an 0x address; --news "..." to add context
+npm run dev -- confirm 1 --size 100
+npm run watch                                # the watcher process (keep it running!)
+npm run dev -- positions
+npm run dev -- killswitch on|off
 ```
 
-This is a **scaffold**, not a runnable strategy — `src/index.ts` submits a stub
-`TradeRequest` and is meant to be replaced with real DEX-quote/calldata-building logic.
-What it does provide, fully wired:
+The watcher **is** the stop-loss. Run it as a persistent service (systemd, pm2,
+Docker) — SL/TP protection stops the moment it isn't running.
 
-- **Session-key scoping** (`src/smartAccount/sessionKeyPolicy.ts`,
-  `src/smartAccount/userOpBuilder.ts`): the bot holds a hot key that can only sign
-  UserOperations, and `assertActionAllowed` rejects any call whose target contract,
-  function selector, or value isn't explicitly allow-listed in
-  `config/session-key-policy.json` before a UserOperation is ever built. **This
-  off-chain check is a second line of defense, not the primary one** — the real
-  enforcement has to live in your smart account's on-chain session-key validator
-  module (ZeroDev Kernel, Safe{Core} session key module, or a bespoke validator),
-  registered with the same constraints. The session key must never be able to change
-  the account's owner/modules or move funds outside the allowlist.
-- **Chainlink price reads** (`src/oracle/chainlinkPriceFeed.ts`): reads Robinhood
-  Chain Stock Token feeds via the standard `AggregatorV3Interface`, and rejects
-  stale or non-positive answers.
-- **Mandatory analysis gating** (`src/analysis/meteringClient.ts`): every guarded
-  trade calls the metering service first, passing along the Chainlink price just read
-  and any operator-supplied `TradeRequest.newsContext` (again, manually curated —
-  never auto-fetched); a metering-service failure or insufficient credits aborts the
-  trade rather than proceeding without analysis. The result comes back as
-  `{ direction, score, summary, keyRisks }`; `src/index.ts`'s example gate only
-  proceeds when `direction === "buy" && score > 0.6` — replace with your own
-  threshold/logic.
-- **Hard guardrails** (`src/risk/guardrails.ts`):
-  - Max position size (`MAX_POSITION_SIZE_USD`).
-  - Max slippage vs. the Chainlink reference price (`MAX_SLIPPAGE_BPS`).
-  - Daily loss circuit breaker (`DAILY_LOSS_LIMIT_USD`) — accumulates realized losses
-    per UTC day across trades (persisted to disk so it survives a restart) and is
-    one-directional: later gains don't "buy back" headroom once tripped.
-  - Manual kill switch — `touch <KILL_SWITCH_PATH>` halts all trading immediately,
-    independent of the chain/bundler/metering service being reachable; delete the
-    file to resume.
-- `src/trade/executor.ts#executeGuardedTrade` runs all of the above, in order, before
-  ever building a UserOperation, and submits it via the ERC-4337 bundler
-  (`eth_estimateUserOperationGas` / `eth_sendUserOperation`) once every check passes.
+### Configuration still pending publication
 
-## Security notes
+These are env-gated; the features that need them disable themselves with clear
+errors until set (everything else works, including tests, in their absence):
 
-- Neither contract nor services here have been audited. Treat this as a starting
-  point, not production-ready code — get an independent audit of `AnalysisCredits.sol`
-  and a security review of the session-key scoping (both the off-chain check and
-  whatever on-chain validator module you pair it with) before handling real funds.
-- The relayer private key (`metering-service`) and the session key (`trading-bot`)
-  should both live in a KMS/secrets manager in any real deployment, not a plaintext
-  `.env` file.
-- `AnalysisCredits` credits are intentionally illiquid and non-refundable to users by
-  design (no `withdraw`/`redeem` for depositors) — make sure your terms of service
-  reflect that before accepting deposits.
+| Setting | What it unlocks | Where to find it |
+| --- | --- | --- |
+| `UNIV2_FACTORY_ADDRESS` / `UNIV2_ROUTER_ADDRESS` | LP-token verification & trading | any graduated RobinFun pair's `factory()` on Blockscout |
+| `ZEROX_RFQ_API_URL` (+ key) | stock-token trading | 0x docs once Robinhood Chain is listed |
+| `SEQUENCER_UPTIME_FEED`, `ETH_USD_FEED`, `config/chainlink-feeds.json` | oracle hardening, rhETH sizing, stock prices | docs.chain.link → Robinhood Chain feeds |
+| `ZERODEV_RPC_URL` + `SESSION_KEY_PRIVATE_KEY` | live execution (else dry-run) | your ZeroDev dashboard |
+
+## Development notes
+
+- Every workspace: `npm test` (vitest) and `npm run lint` (tsc). Contracts:
+  `forge test`. Current suite: 17 metering + 58 bot tests.
+- This repo was scaffolded in a network-restricted sandbox: `forge` could not be
+  installed (both the installer host and solc binary host are blocked here), so
+  contracts were validated with solc 0.8.24 against the vendored deps instead of a
+  real `forge test` run — run it locally before trusting the Solidity suite. The
+  0x RFQ response shape and ZeroDev calls are written to their published docs but
+  could not be exercised against live endpoints from this environment; verify both
+  on testnet first.
+- Neither the contracts nor the services have been audited. Prepaid credits are
+  intentionally non-refundable and illiquid — reflect that in your terms before
+  accepting real deposits. Keys belong in a secrets manager, not `.env`, in any
+  real deployment.
