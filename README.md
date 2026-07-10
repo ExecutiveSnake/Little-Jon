@@ -37,6 +37,8 @@ trading-bot/         Node/TypeScript scaffold: ERC-4337 session-key account,
 - Node.js 20+ for the two TypeScript services.
 - An Alchemy account with Robinhood Chain support enabled, for the metering
   service's WebSocket event listener.
+- An [Anthropic API key](https://console.anthropic.com/) for the metering service's
+  Claude-based analysis agent.
 
 Install Foundry:
 
@@ -45,14 +47,24 @@ curl -L https://foundry.paradigm.xyz | bash
 foundryup
 ```
 
-> This environment's outbound network policy blocked `foundry.paradigm.xyz` and the
-> Foundry binaries could not be installed here, so `forge build`/`forge test` were not
-> run directly in this sandbox. Instead, every contract, test, and script was
-> validated by compiling it with `solc` (0.8.24) against the real vendored
+> **Foundry could not be installed in the sandbox this repo was built in**, so
+> `forge build`/`forge test` were never run directly here — two independent things
+> were tried and both were blocked by that environment's outbound network policy:
+> the normal `foundryup` install (blocked at `foundry.paradigm.xyz`), and building
+> `forge`/`cast`/`anvil` from source via `cargo install --git
+> https://github.com/foundry-rs/foundry` (which compiles, but its `svm-rs-builds`
+> build script fetches `https://binaries.soliditylang.org/.../list.json` at build
+> time, which was also blocked). Neither is a Foundry problem — both are specific to
+> that sandbox's network allowlist, and Foundry installs normally in an unrestricted
+> environment.
+>
+> Instead, every contract, test, and script in `contracts/` was validated by
+> compiling it with `solc` (0.8.24) directly against the real vendored
 > `forge-std`/`openzeppelin-contracts` sources — all three files compile cleanly with
-> no errors. Run `forge build && forge test -vvv` locally once Foundry is installed to
-> execute the test suite (it exercises the runtime behavior — event emission, reverts,
-> fuzzing — that a syntax-level compile can't).
+> no errors. That confirms syntax/type correctness (imports resolve, function/event
+> signatures match, etc.) but **not** runtime behavior. Run `forge build && forge
+> test -vvv` yourself before trusting the test suite's results — it's what actually
+> exercises event emission, reverts, access control, and the fuzz tests.
 
 ## 1. Contracts (`contracts/`)
 
