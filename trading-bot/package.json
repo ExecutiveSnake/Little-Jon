@@ -2,29 +2,37 @@
   "name": "analysis-credits-trading-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "Scaffold for an AI-assisted trading bot on Robinhood Chain: ERC-4337 session-key smart account, Chainlink price reads, metering-service-gated analysis, and hard risk guardrails.",
+  "description": "Little Jon: AI trading-analysis bot for Robinhood Chain \u2014 token resolution, multi-timeframe Claude analysis via prepaid credits, user-confirmed proposals, ZeroDev smart-account execution, and a persistent SL/TP watcher.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/cli.ts",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "watch": "tsx src/cli.ts watch"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "pino": "^9.3.2",
-    "viem": "^2.19.4",
-    "zod": "^3.23.8"
+    "viem": "^2.28.0",
+    "zod": "^3.23.8",
+    "@zerodev/sdk": "^5.5.10",
+    "@zerodev/ecdsa-validator": "^5.4.9",
+    "better-sqlite3": "^11.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.11",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
-    "vitest": "^2.0.5"
+    "vitest": "^2.0.5",
+    "@types/better-sqlite3": "^7.6.11"
   },
   "engines": {
     "node": ">=20"
+  },
+  "bin": {
+    "littlejon": "dist/cli.js"
   }
 }
