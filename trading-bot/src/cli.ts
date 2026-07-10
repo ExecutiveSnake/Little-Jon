@@ -146,6 +146,14 @@ async function main(): Promise<void> {
       break;
     }
 
+    case "ui": {
+      const port = Number(getFlag(args, "port") ?? 8788);
+      const { startUiServer } = await import("./ui/server.js");
+      startUiServer(port);
+      await new Promise(() => {}); // runs until killed
+      break;
+    }
+
     case "killswitch": {
       const mode = args[0];
       const killPath = config.KILL_SWITCH_PATH;
@@ -172,6 +180,7 @@ usage:
   littlejon cancel <id>              cancel a proposal / pending entry
   littlejon positions [--all]        list positions
   littlejon watch                    run the price watcher (required for entries/SL/TP)
+  littlejon ui [--port 8788]         local web dashboard (localhost only)
   littlejon killswitch [on|off]      halt/resume all trading instantly
 `);
   }

@@ -141,10 +141,16 @@ npm run dev -- confirm 1 --size 100
 npm run watch                                # the watcher process (keep it running!)
 npm run dev -- positions
 npm run dev -- killswitch on|off
+npm run ui                                   # local dashboard at http://127.0.0.1:8788
 ```
 
 The watcher **is** the stop-loss. Run it as a persistent service (systemd, pm2,
 Docker) — SL/TP protection stops the moment it isn't running.
+
+The dashboard (`littlejon ui`) is the same engine behind a browser form: analyze a
+token, see the plan/confidence/SL/TP, confirm with a size, watch positions, and
+toggle the kill switch. It binds to localhost and has **no authentication** — never
+expose the port publicly.
 
 ### Configuration still pending publication
 

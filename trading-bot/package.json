@@ -6,12 +6,13 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/ui && cp src/ui/dashboard.html dist/ui/",
     "start": "node dist/index.js",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "lint": "tsc --noEmit",
-    "watch": "tsx src/cli.ts watch"
+    "watch": "tsx src/cli.ts watch",
+    "ui": "tsx src/cli.ts ui"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

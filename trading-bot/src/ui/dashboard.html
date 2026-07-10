@@ -1,0 +1,138 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Little Jon</title>
+<style>
+  :root { color-scheme: light dark; --line:#8884; --up:#1a9f5c; --down:#d64545; }
+  body { font: 15px/1.5 ui-sans-serif, system-ui; max-width: 880px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.05rem; margin-top: 2rem; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; padding: 1rem; }
+  input, button { font: inherit; padding: .45rem .7rem; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
+  button { cursor: pointer; } button.primary { border-color: var(--up); }
+  button.danger { border-color: var(--down); color: var(--down); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; }
+  .tablewrap { overflow-x: auto; }
+  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .status-open { color: var(--up); } .status-awaiting_entry { color: #b8860b; }
+  .pnl-pos { color: var(--up); } .pnl-neg { color: var(--down); }
+  #planbox { border: 1px solid var(--line); border-radius: 8px; padding: 1rem; margin-top: 1rem; display: none; }
+  .conf { font-size: 1.6rem; font-weight: 700; }
+  .muted { opacity: .65; } .small { font-size: .85rem; }
+  #killrow { display: flex; align-items: center; gap: .8rem; margin-top: .5rem; }
+  #err { color: var(--down); white-space: pre-wrap; }
+  ul { margin: .3rem 0; }
+</style>
+
+<h1>🏹 Little Jon</h1>
+<p class="muted small">Local dashboard — same engine as the CLI. Every trade needs your explicit confirm + size.</p>
+<div id="killrow">
+  <strong>Kill switch:</strong> <span id="killstate">…</span>
+  <button id="killbtn" class="danger"></button>
+</div>
+
+<h2>Find a setup</h2>
+<fieldset>
+  <div style="display:flex; gap:.6rem; flex-wrap:wrap">
+    <input id="token" placeholder="token address or name (e.g. NVDA)" style="flex:1; min-width:240px" />
+    <button id="analyze" class="primary">Analyze</button>
+  </div>
+  <input id="news" placeholder="optional curated context, one item per line uses ; separator" style="width:100%; margin-top:.6rem" />
+  <p class="muted small">Each analysis pass spends one prepaid credit; below-threshold passes retry up to the configured limit.</p>
+  <div id="planbox"></div>
+  <p id="err"></p>
+</fieldset>
+
+<h2>Positions <button id="refresh" class="small">refresh</button> <label class="small muted"><input type="checkbox" id="showall" /> show closed</label></h2>
+<div class="tablewrap"><table id="positions"><thead>
+  <tr><th>#</th><th>token</th><th>status</th><th>size</th><th>entry</th><th>SL</th><th>TP</th><th>conf</th><th>P&L</th><th></th></tr>
+</thead><tbody></tbody></table></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const api = async (path, opts) => {
+  const res = await fetch(path, opts);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+};
+
+async function refreshKill() {
+  const { on } = await api("/api/killswitch");
+  $("#killstate").textContent = on ? "🛑 ENGAGED — all trading halted" : "off";
+  $("#killbtn").textContent = on ? "disengage" : "ENGAGE";
+  $("#killbtn").onclick = async () => { await api("/api/killswitch", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ on: !on }) }); refreshKill(); };
+}
+
+function planHtml(d) {
+  const p = d.plan;
+  if (!p) {
+    const best = Math.max(0, ...d.attempts.map(a => a.confidence));
+    const last = d.attempts[d.attempts.length - 1];
+    return `<strong>❌ No setup ≥ ${d.threshold}%</strong> after ${d.attempts.length} attempt(s) (best ${best}%).` +
+      (last ? `<p class="muted">${last.rationale}</p>` : "");
+  }
+  return `
+    <span class="conf">${p.confidence}%</span> confidence · <strong>${d.token.symbol}</strong> @ ${d.currentPrice}
+    <ul>
+      <li>entry: ${p.entryType === "market" ? "market" : `trigger @ ${p.entryPrice}`}</li>
+      <li>stop-loss: ${p.stopLoss} · take-profit: ${p.takeProfit}</li>
+      <li class="small muted">1h ${p.timeframeNotes.h1} · 4h ${p.timeframeNotes.h4} · 1d ${p.timeframeNotes.d1}</li>
+    </ul>
+    <p>${p.rationale}</p>
+    ${p.keyRisks.length ? `<p class="small">risks: ${p.keyRisks.join(" · ")}</p>` : ""}
+    <div style="display:flex; gap:.6rem">
+      <input id="size" type="number" min="1" placeholder="size USD" />
+      <button class="primary" onclick="confirmProposal(${d.proposalId})">Confirm #${d.proposalId}</button>
+    </div>`;
+}
+
+$("#analyze").onclick = async () => {
+  $("#err").textContent = "";
+  $("#planbox").style.display = "block";
+  $("#planbox").innerHTML = "analyzing… (this calls Claude and can take a minute)";
+  try {
+    const news = $("#news").value.split(";").map(s => s.trim()).filter(Boolean);
+    const d = await api("/api/analyze", { method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({ token: $("#token").value, news: news.length ? news : undefined }) });
+    $("#planbox").innerHTML = planHtml(d);
+    refreshPositions();
+  } catch (e) { $("#planbox").style.display = "none"; $("#err").textContent = e.message; }
+};
+
+window.confirmProposal = async (id) => {
+  $("#err").textContent = "";
+  try {
+    const sizeUsd = Number($("#size").value);
+    await api("/api/confirm", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ id, sizeUsd }) });
+    $("#planbox").innerHTML = `✅ position #${id} armed with $${sizeUsd}. Make sure the watcher is running.`;
+    refreshPositions();
+  } catch (e) { $("#err").textContent = e.message; }
+};
+
+window.cancelPosition = async (id) => {
+  try { await api("/api/cancel", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ id }) }); refreshPositions(); }
+  catch (e) { $("#err").textContent = e.message; }
+};
+
+async function refreshPositions() {
+  const all = $("#showall").checked ? "?all=1" : "";
+  const { positions } = await api("/api/positions" + all);
+  $("#positions tbody").innerHTML = positions.map(p => {
+    const pnl = p.realizedPnlUsd === null ? "" :
+      `<span class="${p.realizedPnlUsd >= 0 ? "pnl-pos" : "pnl-neg"}">${p.realizedPnlUsd >= 0 ? "+" : ""}$${p.realizedPnlUsd.toFixed(2)}</span>`;
+    const cancellable = p.status === "proposed" || p.status === "awaiting_entry";
+    return `<tr>
+      <td>${p.id}</td><td>${p.symbol}</td><td class="status-${p.status}">${p.status}</td>
+      <td>${p.sizeUsd ?? ""}</td>
+      <td>${p.entryPrice ?? (p.entryTriggerPrice ? `→${p.entryTriggerPrice}` : "mkt")}</td>
+      <td>${p.stopLoss}</td><td>${p.takeProfit}</td><td>${p.confidence}%</td><td>${pnl}</td>
+      <td>${cancellable ? `<button onclick="cancelPosition(${p.id})">cancel</button>` : ""}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="10" class="muted">no positions</td></tr>`;
+}
+
+$("#refresh").onclick = refreshPositions;
+$("#showall").onchange = refreshPositions;
+refreshKill(); refreshPositions();
+setInterval(refreshPositions, 15000);
+</script>
