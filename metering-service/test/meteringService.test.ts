@@ -21,13 +21,14 @@ const { db } = await import("../src/store/idempotencyStore.js");
 
 const USER = "0x000000000000000000000000000000000000aa";
 
-const PRICE_CONTEXT = { currentPrice: 189.42, asOf: "2026-07-10T00:00:00.000Z" };
-
-function payload(overrides: Partial<{ symbol: string; kind: "token" | "stock-token" }> = {}) {
+function payload(overrides: Partial<{ symbol: string }> = {}) {
   return {
     symbol: "AAPL",
+    tokenAddress: "0x00000000000000000000000000000000000000bb",
     kind: "stock-token" as const,
-    priceContext: PRICE_CONTEXT,
+    currentPrice: 189.42,
+    asOf: "2026-07-10T00:00:00.000Z",
+    candles: { h1: [], h4: [], d1: [] },
     ...overrides,
   };
 }
@@ -35,10 +36,16 @@ function payload(overrides: Partial<{ symbol: string; kind: "token" | "stock-tok
 function mockResult(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     symbol: "AAPL",
-    direction: "buy" as const,
-    score: 0.8,
-    summary: "bullish",
+    hasSetup: true,
+    confidence: 72,
+    direction: "long" as const,
+    entryType: "market" as const,
+    entryPrice: null,
+    stopLoss: 180.0,
+    takeProfit: 205.0,
+    rationale: "bullish",
     keyRisks: ["macro risk"],
+    timeframeNotes: { h1: "up", h4: "up", d1: "up" },
     generatedAt: "now",
     model: "claude-sonnet-5",
     raw: {},
@@ -72,8 +79,8 @@ describe("processAnalysisRequest", () => {
 
     const result = await processAnalysisRequest("key-2", USER, 1, payload());
 
-    expect(result.summary).toBe("bullish");
-    expect(result.direction).toBe("buy");
+    expect(result.rationale).toBe("bullish");
+    expect(result.confidence).toBe(72);
     expect(runAnalysis).toHaveBeenCalledTimes(1);
     expect(debitCreditOnChain).toHaveBeenCalledTimes(1);
     expect(debitCreditOnChain).toHaveBeenCalledWith(USER, 1n);
@@ -103,7 +110,7 @@ describe("processAnalysisRequest", () => {
 
     const result = await processAnalysisRequest("key-4", USER, 1, payload());
 
-    expect(result.summary).toBe("bullish");
+    expect(result.rationale).toBe("bullish");
     expect(runAnalysis).toHaveBeenCalledTimes(2);
     expect(debitCreditOnChain).toHaveBeenCalledTimes(1);
   });
@@ -120,7 +127,7 @@ describe("processAnalysisRequest", () => {
 
     const result = await processAnalysisRequest("key-5", USER, 1, payload());
 
-    expect(result.summary).toBe("bullish");
+    expect(result.rationale).toBe("bullish");
     // Model API was only ever called once, even though the first debit attempt failed.
     expect(runAnalysis).toHaveBeenCalledTimes(1);
     expect(debitCreditOnChain).toHaveBeenCalledTimes(2);
@@ -134,7 +141,7 @@ describe("processAnalysisRequest", () => {
     await processAnalysisRequest("key-6", USER, 1, payload());
     const replay = await processAnalysisRequest("key-6", USER, 1, payload());
 
-    expect(replay.summary).toBe("bullish");
+    expect(replay.rationale).toBe("bullish");
     expect(runAnalysis).toHaveBeenCalledTimes(1);
     expect(debitCreditOnChain).toHaveBeenCalledTimes(1);
   });

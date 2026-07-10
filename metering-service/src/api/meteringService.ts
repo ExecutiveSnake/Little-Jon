@@ -1,5 +1,5 @@
 import { getOnChainCreditBalance, debitCreditOnChain } from "../chain/contract.js";
-import { runAnalysis, type AnalysisRequestPayload, type AnalysisResult } from "./analysisClient.js";
+import { runAnalysis, type AnalysisRequestPayload, type TradePlan } from "./analysisClient.js";
 import {
   createPendingRequest,
   getRequest,
@@ -36,7 +36,7 @@ export async function processAnalysisRequest(
   userAddress: string,
   calls: number,
   payload: AnalysisRequestPayload,
-): Promise<AnalysisResult> {
+): Promise<TradePlan> {
   const existing = getRequest(idempotencyKey);
 
   if (existing) {
@@ -49,7 +49,7 @@ export async function processAnalysisRequest(
     if (existing.status === "debited" || existing.status === "delivered") {
       // Already delivered at least once; result is cached, so no need to touch the
       // model API again. If the debit itself is still outstanding, finish it now.
-      const result = JSON.parse(existing.analysisResult!) as AnalysisResult;
+      const result = JSON.parse(existing.analysisResult!) as TradePlan;
       if (existing.status === "delivered") {
         await settleDebit(idempotencyKey, userAddress, calls);
       }
@@ -73,7 +73,7 @@ export async function processAnalysisRequest(
     }
   }
 
-  let result: AnalysisResult;
+  let result: TradePlan;
   try {
     result = await runAnalysis(payload);
   } catch (err) {

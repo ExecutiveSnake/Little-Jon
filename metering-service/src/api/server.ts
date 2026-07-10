@@ -5,12 +5,13 @@ import { logger } from "../logger.js";
 import { getOnChainCreditBalance } from "../chain/contract.js";
 import { InsufficientCreditsError, processAnalysisRequest } from "./meteringService.js";
 
-const priceContextSchema = z.object({
-  currentPrice: z.number().positive(),
-  asOf: z.string().datetime({ offset: true }),
-  recentHistory: z
-    .array(z.object({ price: z.number().positive(), timestamp: z.string().datetime({ offset: true }) }))
-    .optional(),
+const candleSchema = z.object({
+  t: z.number().int().nonnegative(),
+  o: z.number().positive(),
+  h: z.number().positive(),
+  l: z.number().positive(),
+  c: z.number().positive(),
+  v: z.number().nonnegative().default(0),
 });
 
 const analyzeRequestSchema = z.object({
@@ -18,8 +19,16 @@ const analyzeRequestSchema = z.object({
   userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   calls: z.number().int().positive().default(1),
   symbol: z.string().min(1),
-  kind: z.enum(["token", "stock-token"]),
-  priceContext: priceContextSchema,
+  tokenAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  kind: z.enum(["stock-token", "lp-token"]),
+  currentPrice: z.number().positive(),
+  asOf: z.string().datetime({ offset: true }),
+  candles: z.object({
+    h1: z.array(candleSchema),
+    h4: z.array(candleSchema),
+    d1: z.array(candleSchema),
+  }),
+  attempt: z.number().int().positive().optional(),
   // Manually curated by the caller/operator — this service never fetches news/social
   // data itself. See analysisClient.ts for why.
   newsContext: z.array(z.string()).optional(),
@@ -57,16 +66,10 @@ export function createServer() {
       return res.status(400).json({ error: parsed.error.flatten() });
     }
 
-    const { idempotencyKey, userAddress, calls, symbol, kind, priceContext, newsContext } =
-      parsed.data;
+    const { idempotencyKey, userAddress, calls, ...analysisPayload } = parsed.data;
 
     try {
-      const result = await processAnalysisRequest(idempotencyKey, userAddress, calls, {
-        symbol,
-        kind,
-        priceContext,
-        newsContext,
-      });
+      const result = await processAnalysisRequest(idempotencyKey, userAddress, calls, analysisPayload);
       res.json({ idempotencyKey, result });
     } catch (err) {
       if (err instanceof InsufficientCreditsError) {
