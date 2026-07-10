@@ -22,6 +22,10 @@ async function runOnce(): Promise<void> {
     value: 0n,
     notionalUsd: 0,
     quotedPrice: 0,
+    // Manually curated by an operator — replace with whatever notes/headlines you
+    // trust for this symbol right now. Never auto-populate this from a news/social
+    // API in this scaffold; see analysis/meteringClient.ts for why.
+    newsContext: [],
   };
 
   logger.warn(
@@ -30,7 +34,7 @@ async function runOnce(): Promise<void> {
 
   await executeGuardedTrade(request, (analysis) => {
     logger.info({ analysis }, "analysis received");
-    return analysis.score > 0.6;
+    return analysis.direction === "buy" && analysis.score > 0.6;
   });
 }
 

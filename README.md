@@ -19,9 +19,10 @@ trading-bot/         Node/TypeScript scaffold: ERC-4337 session-key account,
    can never move between accounts or trade on a secondary market.
 2. `metering-service` watches for `Deposit` events (via an Alchemy WebSocket endpoint)
    and exposes an internal `POST /v1/analyze` API. On a request, it checks the user's
-   on-chain credit balance, calls the model API, and — only once analysis has actually
-   been delivered — calls `AnalysisCredits.debitCredit(user, calls)` from a relayer
-   key holding `RELAYER_ROLE`.
+   on-chain credit balance, calls the Claude API for the actual analysis, and — only
+   once analysis has actually been delivered — calls
+   `AnalysisCredits.debitCredit(user, calls)` from a relayer key holding
+   `RELAYER_ROLE`.
 3. `trading-bot` is a scaffold for a strategy that, before every trade: checks a
    manual kill switch and daily loss circuit breaker, enforces a max position size,
    reads a Chainlink Stock Token price feed and enforces a max slippage band, calls
@@ -157,25 +158,38 @@ the conversion-rate math and debit underflow safety.
 ```bash
 cd metering-service
 cp .env.example .env   # fill in ALCHEMY_*_URL, ANALYSIS_CREDITS_ADDRESS,
-                        # RELAYER_PRIVATE_KEY, MODEL_API_URL/KEY
+                        # RELAYER_PRIVATE_KEY, ANTHROPIC_API_KEY
 npm install
-npm test                # vitest — idempotency/retry unit tests
+npm test                # vitest — idempotency/retry + analysis-agent unit tests
 npm run dev              # or: npm run build && npm start
 ```
 
 - `src/chain/listener.ts` subscribes to `Deposit` on `ANALYSIS_CREDITS_ADDRESS` over
   the Alchemy WS endpoint, and backfills any events missed while offline using the
   HTTPS endpoint on startup.
+- `src/api/analysisClient.ts` is the analysis agent: it calls the Claude API
+  (`ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL`, default `claude-sonnet-5`) with
+  `tool_choice` forced to a `submit_analysis` tool, so the response is always a
+  structured `{ direction: "buy"|"sell"|"hold", score, summary, keyRisks }` —
+  never free text that has to be parsed hopefully. It analyzes exactly what it's
+  given (current price + optional recent history from the caller's oracle read, plus
+  optional `newsContext`) and does **not** fetch news/sentiment from any social API
+  itself — `newsContext` is meant to be manually curated (by an operator, or whatever
+  trusted process you run) and passed straight through, precisely so a noisy or
+  rate-limited feed (e.g. Twitter/X's API) can never silently degrade analysis
+  quality. Point `analysisClient.ts` at your own curation pipeline later if you want
+  that automated.
 - `src/api/server.ts` exposes:
   - `GET /v1/credits/:address` — on-chain credit balance (source of truth; never
     trust a local cache for this).
-  - `POST /v1/analyze` — `{ idempotencyKey, userAddress, calls, symbol, kind }` →
-    checks balance, calls the model API, debits credits on success.
+  - `POST /v1/analyze` — `{ idempotencyKey, userAddress, calls, symbol, kind,
+    priceContext: { currentPrice, asOf, recentHistory? }, newsContext? }` → checks
+    balance, calls the Claude API, debits credits on success.
 - `src/api/meteringService.ts` is the idempotency/retry core. Guarantees (see the unit
   tests in `test/meteringService.test.ts`):
   - A request is never charged (debited) unless analysis was actually delivered.
   - Retrying a request that already delivered analysis but failed to debit does
-    **not** call the (potentially costly) model API a second time — it goes straight
+    **not** call the (potentially costly) Claude API a second time — it goes straight
     to retrying the debit.
   - Retrying a request that fully completed (`debited`) replays the cached result
     instead of re-running anything.
@@ -213,8 +227,13 @@ What it does provide, fully wired:
   Chain Stock Token feeds via the standard `AggregatorV3Interface`, and rejects
   stale or non-positive answers.
 - **Mandatory analysis gating** (`src/analysis/meteringClient.ts`): every guarded
-  trade calls the metering service first; a metering-service failure or insufficient
-  credits aborts the trade rather than proceeding without analysis.
+  trade calls the metering service first, passing along the Chainlink price just read
+  and any operator-supplied `TradeRequest.newsContext` (again, manually curated —
+  never auto-fetched); a metering-service failure or insufficient credits aborts the
+  trade rather than proceeding without analysis. The result comes back as
+  `{ direction, score, summary, keyRisks }`; `src/index.ts`'s example gate only
+  proceeds when `direction === "buy" && score > 0.6` — replace with your own
+  threshold/logic.
 - **Hard guardrails** (`src/risk/guardrails.ts`):
   - Max position size (`MAX_POSITION_SIZE_USD`).
   - Max slippage vs. the Chainlink reference price (`MAX_SLIPPAGE_BPS`).

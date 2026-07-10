@@ -35,6 +35,11 @@ export interface TradeRequest {
   notionalUsd: number;
   /** Price this trade would actually execute at (e.g. from a DEX quote), for the slippage guardrail. */
   quotedPrice: number;
+  /**
+   * Manually curated news/context to pass to the analysis agent (headlines, notes,
+   * whatever an operator trusts) — never fetched from a social/news API automatically.
+   */
+  newsContext?: string[];
 }
 
 /**
@@ -77,7 +82,12 @@ export async function executeGuardedTrade(
   const reference = await readStockTokenPrice(request.chainlinkFeed);
   assertSlippageAllowed(reference.price, request.quotedPrice);
 
-  const analysis = await requestAnalysis(request.symbol, request.kind);
+  const analysis = await requestAnalysis(
+    request.symbol,
+    request.kind,
+    { currentPrice: reference.price, asOf: reference.updatedAt.toISOString() },
+    request.newsContext,
+  );
   if (!analysisGate(analysis)) {
     throw new TradeAbortedError(
       `analysis gate rejected trade for ${request.symbol}: ${analysis.summary}`,
