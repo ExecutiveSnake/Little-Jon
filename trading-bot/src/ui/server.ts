@@ -25,7 +25,43 @@ import {
  *   POST /api/confirm           { id, sizeUsd }
  *   POST /api/cancel            { id }
  *   GET/POST /api/killswitch    { on }
+ *
+ * Cross-origin access (e.g. the LittleJohn wallet app) is opt-in via
+ * UI_ALLOWED_ORIGINS, a comma-separated origin allowlist:
+ *   UI_ALLOWED_ORIGINS="http://localhost:5173,capacitor://localhost" npm run ui
+ * Any browser request carrying an Origin that is neither this server itself
+ * nor allowlisted is rejected outright — this also blocks CSRF from random
+ * websites driving the bot through the victim's browser (previously possible
+ * via forced "simple" POSTs, since bodies were parsed regardless of
+ * content-type). Requests without an Origin header (curl, scripts) are
+ * unaffected.
  */
+
+const allowedOrigins = new Set(
+  (process.env.UI_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean),
+);
+
+/**
+ * Returns false (request already answered with 403) when the Origin is
+ * present and untrusted; otherwise sets CORS response headers as needed.
+ */
+function applyCors(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  const selfOrigin = `http://${req.headers.host}`;
+  if (origin !== selfOrigin && !allowedOrigins.has(origin)) {
+    json(res, 403, {
+      error: `origin ${origin} not allowed; add it to UI_ALLOWED_ORIGINS to permit it`,
+    });
+    return false;
+  }
+  res.setHeader("access-control-allow-origin", origin);
+  res.setHeader("vary", "Origin");
+  return true;
+}
 
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -48,6 +84,23 @@ const uiDir = path.dirname(fileURLToPath(import.meta.url));
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
+
+  if (!applyCors(req, res)) return;
+
+  if (req.method === "OPTIONS") {
+    // Preflight for allowlisted cross-origin callers. Chrome's Private
+    // Network Access requires the extra header when an HTTPS page talks
+    // to a localhost service.
+    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+    res.setHeader("access-control-allow-headers", "content-type");
+    res.setHeader("access-control-max-age", "600");
+    if (req.headers["access-control-request-private-network"] === "true") {
+      res.setHeader("access-control-allow-private-network", "true");
+    }
+    res.writeHead(204);
+    res.end();
+    return;
+  }
 
   if (req.method === "GET" && url.pathname === "/") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
