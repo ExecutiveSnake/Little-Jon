@@ -1,4 +1,3 @@
-import { config } from "../config.js";
 import { logger } from "../logger.js";
 
 /** Shape of a token entry from Blockscout API v2 `/tokens?q=...`. */
@@ -38,8 +37,8 @@ function parseNum(value: string | null | undefined): number | null {
  * (name or symbol). Used to resolve user-typed names like "NVDA" or "dogewifhat"
  * to concrete addresses.
  */
-export async function searchTokens(query: string): Promise<BlockscoutToken[]> {
-  const url = `${config.BLOCKSCOUT_API_URL}/tokens?q=${encodeURIComponent(query)}&type=ERC-20`;
+export async function searchTokens(query: string, apiUrl: string): Promise<BlockscoutToken[]> {
+  const url = `${apiUrl}/tokens?q=${encodeURIComponent(query)}&type=ERC-20`;
   const response = await fetch(url, { headers: { accept: "application/json" } });
   if (!response.ok) {
     throw new Error(`Blockscout token search failed: HTTP ${response.status}`);

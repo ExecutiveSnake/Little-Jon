@@ -21,7 +21,7 @@ import {
  * Endpoints:
  *   GET  /                      dashboard page
  *   GET  /api/positions?all=1   positions (active by default)
- *   POST /api/analyze           { token, news?: string[] }
+ *   POST /api/analyze           { token, chain?: 'robinhood'|'ethereum'|'solana', news?: string[] }
  *   POST /api/confirm           { id, sizeUsd }
  *   POST /api/cancel            { id }
  *   GET/POST /api/killswitch    { on }
@@ -131,7 +131,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       const news = Array.isArray(body.news)
         ? (body.news as string[]).filter((n) => typeof n === "string" && n.trim())
         : undefined;
-      const result = await analyzeToken(token, news);
+      const chain = typeof body.chain === "string" && body.chain ? body.chain : "robinhood";
+      const result = await analyzeToken(token, news, chain);
       return json(res, 200, {
         token: result.token,
         currentPrice: result.currentPrice,

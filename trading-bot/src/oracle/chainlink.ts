@@ -1,5 +1,5 @@
-import type { Address } from "viem";
-import { publicClient } from "../chain/clients.js";
+import type { Address, PublicClient } from "viem";
+import { getChainDef, evmClient, type ChainDef } from "../chain/chains.js";
 import { config } from "../config.js";
 import { CHAINLINK_AGGREGATOR_ABI, ERC8056_ABI } from "../chain/abis.js";
 import { logger } from "../logger.js";
@@ -26,11 +26,14 @@ const SEQUENCER_GRACE_PERIOD_SEC = 3_600;
  * Unconfigured (address not yet published), this check is skipped and staleness
  * remains the only guard — set SEQUENCER_UPTIME_FEED as soon as it's known.
  */
-export async function assertSequencerUp(): Promise<void> {
-  if (!config.SEQUENCER_UPTIME_FEED) return;
+export async function assertSequencerUp(chain?: ChainDef): Promise<void> {
+  const def = chain ?? getChainDef("robinhood");
+  const feed = def.sequencerUptimeFeed;
+  if (!feed) return;
+  const client = evmClient(def);
 
-  const [, answer, startedAt] = await publicClient.readContract({
-    address: config.SEQUENCER_UPTIME_FEED as Address,
+  const [, answer, startedAt] = await client.readContract({
+    address: feed,
     abi: CHAINLINK_AGGREGATOR_ABI,
     functionName: "latestRoundData",
   });
@@ -56,21 +59,24 @@ export async function readStockTokenPrice(
   token: Address,
   feed: Address,
   maxStalenessSec = config.CHAINLINK_MAX_STALENESS_SEC,
+  chain?: ChainDef,
 ): Promise<PriceReading> {
-  await assertSequencerUp();
+  const def = chain ?? getChainDef("robinhood");
+  const client: PublicClient = evmClient(def);
+  await assertSequencerUp(def);
 
   const [roundData, decimals, paused] = await Promise.all([
-    publicClient.readContract({
+    client.readContract({
       address: feed,
       abi: CHAINLINK_AGGREGATOR_ABI,
       functionName: "latestRoundData",
     }),
-    publicClient.readContract({
+    client.readContract({
       address: feed,
       abi: CHAINLINK_AGGREGATOR_ABI,
       functionName: "decimals",
     }),
-    publicClient
+    client
       .readContract({ address: token, abi: ERC8056_ABI, functionName: "oraclePaused" })
       .catch(() => false), // advisory flag; absence of the getter is not fatal
   ]);

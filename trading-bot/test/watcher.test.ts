@@ -25,6 +25,8 @@ import type { TokenInfo } from "../src/tokens/registry.js";
 import type { TradePlan } from "../src/analysis/meteringClient.js";
 
 const TOKEN: TokenInfo = {
+  chain: "robinhood",
+  key: "0x00000000000000000000000000000000000000aa",
   address: "0x00000000000000000000000000000000000000aa",
   symbol: "TEST",
   name: "Test",

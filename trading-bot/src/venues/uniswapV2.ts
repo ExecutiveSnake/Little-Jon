@@ -1,8 +1,25 @@
 import { encodeFunctionData, type Address, type Hex } from "viem";
-import { publicClient } from "../chain/clients.js";
 import { config } from "../config.js";
+import { evmClient, getChainDef, type EvmQuote } from "../chain/chains.js";
 import { ERC20_ABI, UNIV2_PAIR_ABI, UNIV2_ROUTER_ABI } from "../chain/abis.js";
 import type { TokenInfo } from "../tokens/registry.js";
+
+/** The quote asset (address + symbol) an LP token trades against, per its chain. */
+export function quoteAssetFor(token: TokenInfo): EvmQuote {
+  const chain = getChainDef(token.chain);
+  for (const quote of [chain.usdQuote, chain.ethQuote]) {
+    if (quote && quote.symbol === token.pairedWith) return quote;
+  }
+  throw new VenueUnavailableError(
+    `${token.symbol} is quoted in ${token.pairedWith}, which is not a configured quote asset on ${chain.displayName}`,
+  );
+}
+
+/** True when the token's LP quote is the chain's ETH-side asset (rhETH/WETH). */
+export function isEthQuoted(token: TokenInfo): boolean {
+  const chain = getChainDef(token.chain);
+  return token.pairedWith !== null && token.pairedWith === chain.ethQuote?.symbol;
+}
 
 /**
  * Uniswap V2 venue adapter for graduated/LP'd tokens. Prices come from pair
@@ -78,19 +95,20 @@ export async function readPairState(token: TokenInfo): Promise<PairState> {
     throw new VenueUnavailableError(`${token.symbol} has no LP pair recorded`);
   }
   const pair = token.pairAddress;
-  const quoteAddr = (token.pairedWith === "USDG" ? config.USDG_ADDRESS : config.RHETH_ADDRESS) as Address;
+  const client = evmClient(getChainDef(token.chain));
+  const quoteAddr = quoteAssetFor(token).address;
 
   let meta = pairMetaCache.get(pair);
   if (!meta) {
     const [token0, quoteDecimals] = await Promise.all([
-      publicClient.readContract({ address: pair, abi: UNIV2_PAIR_ABI, functionName: "token0" }),
-      publicClient.readContract({ address: quoteAddr, abi: ERC20_ABI, functionName: "decimals" }),
+      client.readContract({ address: pair, abi: UNIV2_PAIR_ABI, functionName: "token0" }),
+      client.readContract({ address: quoteAddr, abi: ERC20_ABI, functionName: "decimals" }),
     ]);
     meta = { baseIsToken0: token0.toLowerCase() === token.address.toLowerCase(), quoteDecimals };
     pairMetaCache.set(pair, meta);
   }
 
-  const [reserve0, reserve1] = await publicClient.readContract({
+  const [reserve0, reserve1] = await client.readContract({
     address: pair,
     abi: UNIV2_PAIR_ABI,
     functionName: "getReserves",
@@ -144,14 +162,15 @@ export async function buildLpSwap(
   slippageBps = config.MAX_SLIPPAGE_BPS,
   deadlineSec = 600,
 ): Promise<SwapPlan> {
-  if (!config.UNIV2_ROUTER_ADDRESS) {
+  const chain = getChainDef(token.chain);
+  if (!chain.univ2Router) {
     throw new VenueUnavailableError(
-      "UNIV2_ROUTER_ADDRESS is not configured — set it once Robinhood Chain's Uniswap V2 " +
-        "router address is published.",
+      `no Uniswap V2 router configured for ${chain.displayName} — ` +
+        `set it once the deployment address is published.`,
     );
   }
-  const router = config.UNIV2_ROUTER_ADDRESS as Address;
-  const quoteAddr = (token.pairedWith === "USDG" ? config.USDG_ADDRESS : config.RHETH_ADDRESS) as Address;
+  const router = chain.univ2Router;
+  const quoteAddr = quoteAssetFor(token).address;
 
   const state = await readPairState(token);
   const [reserveIn, reserveOut, tokenIn, decimalsIn, decimalsOut] =

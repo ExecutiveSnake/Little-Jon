@@ -42,6 +42,27 @@ const envSchema = z.object({
   /** Max seconds since a Chainlink round update before the price is considered stale. */
   CHAINLINK_MAX_STALENESS_SEC: z.coerce.number().int().positive().default(3600),
 
+  // --- cross-chain ---
+  /** Chains Little Jon operates on. Robinhood Chain is home; Ethereum gets full
+   *  EVM support; Solana is analyze/watch via Pyth (execution pending a venue). */
+  ENABLED_CHAINS: z.string().default("robinhood,ethereum,solana"),
+  ETHEREUM_RPC_URL: z.string().url().default("https://ethereum-rpc.publicnode.com"),
+  ETHEREUM_BLOCKSCOUT_API_URL: z.string().url().default("https://eth.blockscout.com/api/v2"),
+  /** Canonical Uniswap V2 on Ethereum mainnet. */
+  ETHEREUM_UNIV2_FACTORY: addressSchema.default("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+  ETHEREUM_UNIV2_ROUTER: addressSchema.default("0x7a250d5630B4cF539739dF2C7dAdC661BE596E3B"),
+  ETHEREUM_WETH_ADDRESS: addressSchema.default("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+  ETHEREUM_USDC_ADDRESS: addressSchema.default("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+  ETHEREUM_WBTC_ADDRESS: addressSchema.default("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
+  /** Canonical Chainlink ETH/USD proxy on Ethereum mainnet. */
+  ETHEREUM_ETH_USD_FEED: addressSchema.default("0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"),
+
+  // --- Pyth (major-asset oracle prices: ETH, SOL, BTC, …) ---
+  PYTH_HERMES_URL: z.string().url().default("https://hermes.pyth.network"),
+  PYTH_BENCHMARKS_URL: z.string().url().default("https://benchmarks.pyth.network"),
+  /** Max seconds since a Pyth publish before the price is considered stale. */
+  PYTH_MAX_STALENESS_SEC: z.coerce.number().int().positive().default(120),
+
   // --- metering / analysis ---
   METERING_SERVICE_URL: z.string().url().default("http://localhost:8787"),
   /** Confidence gate for proposing a trade. Hard floor of 65 is enforced below. */
@@ -59,7 +80,10 @@ const envSchema = z.object({
   SMART_ACCOUNT_ADDRESS: optionalAddress,
 
   // --- watcher ---
-  WATCHER_POLL_INTERVAL_MS: z.coerce.number().int().min(1000).default(30_000),
+  /** Price-poll cadence. Ticks are read-only (RPC reads + free Pyth pulls) and
+   *  never consume analysis credits, so the only cost of a faster tick is RPC
+   *  quota. 60s is the sweet spot for swing-style SL/TP levels. */
+  WATCHER_POLL_INTERVAL_MS: z.coerce.number().int().min(1000).default(60_000),
   /** Pending trigger entries expire after this many hours if never hit. */
   ENTRY_TRIGGER_TTL_HOURS: z.coerce.number().positive().default(168),
 

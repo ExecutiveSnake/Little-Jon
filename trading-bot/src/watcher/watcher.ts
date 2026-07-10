@@ -37,7 +37,7 @@ export async function tick(nowSec = Math.floor(Date.now() / 1000)): Promise<void
   }
 
   for (const [tokenAddress, positions] of byToken) {
-    const token = getKnownToken(tokenAddress);
+    const token = getKnownToken(tokenAddress, positions[0]!.chain);
     if (!token) {
       logger.error({ tokenAddress }, "active position references unknown token — skipping");
       continue;
@@ -53,7 +53,7 @@ export async function tick(nowSec = Math.floor(Date.now() / 1000)): Promise<void
       continue;
     }
 
-    insertPricePoint(token.address, nowSec, price, 0, "watcher");
+    insertPricePoint(token.key, nowSec, price, 0, "watcher");
 
     for (const position of positions) {
       const action = evaluatePosition(position, price, nowSec);

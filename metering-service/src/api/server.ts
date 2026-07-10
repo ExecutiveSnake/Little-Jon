@@ -20,7 +20,7 @@ const analyzeRequestSchema = z.object({
   calls: z.number().int().positive().default(1),
   symbol: z.string().min(1),
   tokenAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
-  kind: z.enum(["stock-token", "lp-token"]),
+  kind: z.enum(["stock-token", "lp-token", "major"]),
   currentPrice: z.number().positive(),
   asOf: z.string().datetime({ offset: true }),
   candles: z.object({

@@ -22,7 +22,7 @@ export interface CandleSets {
   d1: Candle[];
 }
 
-export type TokenKind = "stock-token" | "lp-token";
+export type TokenKind = "stock-token" | "lp-token" | "major";
 
 export interface AnalysisRequestPayload {
   symbol: string;

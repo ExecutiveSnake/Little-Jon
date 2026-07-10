@@ -1,4 +1,4 @@
-import type { Address } from "viem";
+import type { Address, PublicClient } from "viem";
 import { publicClient } from "../chain/clients.js";
 import { CHAINLINK_AGGREGATOR_ABI, UNIV2_PAIR_ABI } from "../chain/abis.js";
 import { insertManyPricePoints, type PricePoint } from "./store.js";
@@ -24,14 +24,16 @@ export async function backfillChainlink(
   feed: Address,
   maxLookbackSec = 180 * 86_400,
   maxRounds = 5_000,
+  storageKey: string = token,
+  client: PublicClient = publicClient,
 ): Promise<number> {
   const [latest, decimals] = await Promise.all([
-    publicClient.readContract({
+    client.readContract({
       address: feed,
       abi: CHAINLINK_AGGREGATOR_ABI,
       functionName: "latestRoundData",
     }),
-    publicClient.readContract({
+    client.readContract({
       address: feed,
       abi: CHAINLINK_AGGREGATOR_ABI,
       functionName: "decimals",
@@ -46,7 +48,7 @@ export async function backfillChainlink(
   for (let i = 0; i < maxRounds; i++) {
     let round;
     try {
-      round = await publicClient.readContract({
+      round = await client.readContract({
         address: feed,
         abi: CHAINLINK_AGGREGATOR_ABI,
         functionName: "getRoundData",
@@ -67,7 +69,7 @@ export async function backfillChainlink(
     roundId = roundId - 1n;
   }
 
-  insertManyPricePoints(token, points, "chainlink-backfill");
+  insertManyPricePoints(storageKey, points, "chainlink-backfill");
   logger.info({ token, feed, rounds: points.length }, "chainlink backfill complete");
   return points.length;
 }
@@ -124,22 +126,24 @@ export async function backfillUniv2(
   quoteDecimals: number,
   lookbackBlocks = 500_000n,
   chunkSize = 10_000n,
+  storageKey: string = token,
+  client: PublicClient = publicClient,
 ): Promise<number> {
-  const token0 = await publicClient.readContract({
+  const token0 = await client.readContract({
     address: pair,
     abi: UNIV2_PAIR_ABI,
     functionName: "token0",
   });
   const baseIsToken0 = token0.toLowerCase() === token.toLowerCase();
 
-  const latestBlock = await publicClient.getBlockNumber();
+  const latestBlock = await client.getBlockNumber();
   const fromBlock = latestBlock > lookbackBlocks ? latestBlock - lookbackBlocks : 0n;
 
   const blockTimestampCache = new Map<bigint, number>();
   async function blockTime(blockNumber: bigint): Promise<number> {
     const cached = blockTimestampCache.get(blockNumber);
     if (cached !== undefined) return cached;
-    const block = await publicClient.getBlock({ blockNumber });
+    const block = await client.getBlock({ blockNumber });
     const t = Number(block.timestamp);
     blockTimestampCache.set(blockNumber, t);
     return t;
@@ -149,7 +153,7 @@ export async function backfillUniv2(
 
   for (let start = fromBlock; start <= latestBlock; start += chunkSize) {
     const end = start + chunkSize - 1n > latestBlock ? latestBlock : start + chunkSize - 1n;
-    const logs = await publicClient.getContractEvents({
+    const logs = await client.getContractEvents({
       address: pair,
       abi: UNIV2_PAIR_ABI,
       eventName: "Swap",
@@ -165,7 +169,7 @@ export async function backfillUniv2(
     }
   }
 
-  insertManyPricePoints(token, points, "univ2-backfill");
+  insertManyPricePoints(storageKey, points, "univ2-backfill");
   logger.info({ token, pair, swaps: points.length }, "univ2 swap backfill complete");
   return points.length;
 }

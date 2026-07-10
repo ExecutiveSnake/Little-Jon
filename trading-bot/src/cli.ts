@@ -58,12 +58,16 @@ async function main(): Promise<void> {
 
   switch (command) {
     case "analyze": {
-      const input = args.filter((a) => !a.startsWith("--"))[0];
-      if (!input) throw new Error("usage: analyze <token address or name> [--news '...' ]");
+      const input = args.filter((a) => !a.startsWith("--") && args[args.indexOf(a) - 1] !== "--news" && args[args.indexOf(a) - 1] !== "--chain")[0];
+      if (!input)
+        throw new Error(
+          "usage: analyze <token address or name> [--chain robinhood|ethereum|solana] [--news '...' ]",
+        );
       const news = args.filter((_, i) => args[i - 1] === "--news");
+      const chain = args.filter((_, i) => args[i - 1] === "--chain")[0] ?? "robinhood";
 
-      console.log(`\nanalyzing ${input}…`);
-      const result = await analyzeToken(input, news.length > 0 ? news : undefined);
+      console.log(`\nanalyzing ${input} on ${chain}…`);
+      const result = await analyzeToken(input, news.length > 0 ? news : undefined, chain);
 
       console.log(
         `\n${result.token.symbol} (${result.token.kind}) @ ${result.currentPrice} — ` +
@@ -175,6 +179,7 @@ async function main(): Promise<void> {
 
 usage:
   littlejon analyze <token>          find a setup (address or name; costs credits)
+                                     [--chain robinhood|ethereum|solana]
       [--news "headline" ...]        optionally pass curated context items
   littlejon confirm <id> --size <$>  arm a proposal with your position size
   littlejon cancel <id>              cancel a proposal / pending entry

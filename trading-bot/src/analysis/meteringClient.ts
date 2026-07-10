@@ -43,7 +43,7 @@ async function requestSinglePlan(
       calls: 1,
       symbol: token.symbol,
       tokenAddress: token.address,
-      kind: token.kind === "stock" ? "stock-token" : "lp-token",
+      kind: token.kind === "stock" ? "stock-token" : token.kind === "major" ? "major" : "lp-token",
       currentPrice,
       asOf: new Date().toISOString(),
       candles,

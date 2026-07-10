@@ -1,6 +1,7 @@
 # Little Jon — AI Trading-Analysis Bot on Robinhood Chain
 
-Little Jon is a user-in-the-loop trading system for Robinhood Chain: users prepay
+Little Jon is a user-in-the-loop trading system for Robinhood Chain — with
+cross-chain support for Ethereum and Solana: users prepay
 for AI analysis with an illiquid, non-transferable credit, ask the bot to find a
 trade setup on any tradable token, manually confirm (with their own position size)
 any proposal that clears a confidence bar, and let a persistent watcher execute
@@ -34,17 +35,32 @@ trading-bot/         Node/TS "Little Jon": token resolution, candle history, pro
    market-or-trigger entry, stop-loss, take-profit, confidence, rationale, risks.
    Nothing executes until the user runs `littlejon confirm <id> --size <USD>`.
 5. **Watch & execute.** The watcher (one shared backend loop for all users'
-   positions) polls trusted prices — cheap on-chain reads, no credit cost — fires
+   positions) polls trusted prices every 60 seconds by default
+   (`WATCHER_POLL_INTERVAL_MS`) — cheap on-chain reads and free Pyth pulls, no
+   credit cost — fires
    trigger entries, stop-losses, and take-profits, executes swaps through the smart
    account, and confirms every exit by measuring the USDG/rhETH actually received
    in the wallet before notifying. Realized P&L feeds a daily-loss circuit breaker.
+
+## Chains
+
+| Chain | Token classes | Execution |
+| --- | --- | --- |
+| Robinhood Chain (default) | stock, LP, major | full (0x RFQ / V2 router via smart account) |
+| Ethereum | LP (canonical Uniswap V2), major | full — majors trade via their wrapped forms (ETH→WETH, BTC→WBTC ↔ USDC) |
+| Solana | major only | **paper** (labeled; oracle-priced tracking, P&L excluded from the loss breaker) until a venue is wired |
+
+Select with `littlejon analyze <token> --chain ethereum` (CLI) or the `chain`
+field on `POST /api/analyze`. Non-home-chain data is namespaced in the local
+store (`ethereum:0x…`, `major:SOL`), so nothing collides.
 
 ## Token classes & venues
 
 | Class | Identified by | Price source | Executes via | History backfill |
 | --- | --- | --- | --- | --- |
 | Stock token | ERC-8056 `uiMultiplier()` | Chainlink feed (multiplier included) | 0x RFQ ↔ USDG | Chainlink round-walk |
-| LP'd token | live Uniswap V2 pair vs USDG/rhETH | pair reserves | V2 router swap | Swap-event replay |
+| LP'd token | live Uniswap V2 pair vs the chain's USD/ETH quote | pair reserves | V2 router swap | Swap-event replay |
+| Major asset (ETH, SOL, BTC, …) | symbol match | **Pyth oracle** (Hermes, staleness-checked) | wrapped form on EVM; paper elsewhere | Pyth Benchmarks bars |
 | Anything else | — | — | **refused** | — |
 
 Bonding-curve (RobinFun) tokens that haven't graduated to a Uniswap pool are

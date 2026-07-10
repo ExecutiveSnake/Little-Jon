@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import type { TradePlan } from "../analysis/meteringClient.js";
+import type { LjChainId } from "../chain/chains.js";
 import type { TokenInfo } from "../tokens/registry.js";
 
 export type PositionStatus =
@@ -15,9 +16,11 @@ export type ExitReason = "tp" | "sl" | "manual" | "expired";
 export interface Position {
   id: number;
   userId: string;
+  /** Token storage key (registry.tokenStorageKey / majors.majorKey). */
   token: string;
+  chain: LjChainId;
   symbol: string;
-  kind: "stock" | "lp";
+  kind: "stock" | "lp" | "major";
   status: PositionStatus;
   entryType: "market" | "trigger";
   entryTriggerPrice: number | null;
@@ -46,8 +49,9 @@ function rowToPosition(row: Record<string, unknown>): Position {
     id: row.id as number,
     userId: row.user_id as string,
     token: row.token as string,
+    chain: ((row.chain as string) ?? "robinhood") as LjChainId,
     symbol: row.symbol as string,
-    kind: row.kind as "stock" | "lp",
+    kind: row.kind as "stock" | "lp" | "major",
     status: row.status as PositionStatus,
     entryType: row.entry_type as "market" | "trigger",
     entryTriggerPrice: row.entry_trigger_price as number | null,
@@ -97,14 +101,15 @@ export function createProposal(
   const result = db
     .prepare(
       `INSERT INTO positions
-         (user_id, token, symbol, kind, status, entry_type, entry_trigger_price,
+         (user_id, token, chain, symbol, kind, status, entry_type, entry_trigger_price,
           trigger_direction, stop_loss, take_profit, confidence, plan_json,
           created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       userId,
-      token.address,
+      token.key,
+      token.chain,
       token.symbol,
       token.kind,
       plan.entryType,
